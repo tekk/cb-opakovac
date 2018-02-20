@@ -22,10 +22,13 @@ Date: 08.09.2015
 
 DS3232RTC RTC;
 
-#define TERMISTOR_PIN PF7
-#define LED_PIN PD6
+#define TERMISTOR_PIN PIN_F7
+#define LED_PIN PIN_D6
+#define CHANNEL_CHANGE_RELAY_PIN PIN_C3
 
 #define TX_TIMEOUT 40000
+#define PIN_TX PIN_C4
+#define PIN_RX PIN_C5
 
 #define MAX_BUFF_LENGTH 512
 #define MAX_SMSNO_LENGTH 20
@@ -43,7 +46,7 @@ char cisloSMS[MAX_SMSNO_LENGTH];
 #define LED_OFF LOW
 
 const int relatka[POCET_RELATOK] = { 8, 7, 5, 4, };
-const int ledky[POCET_RELATOK] = { PF6, PF6, PF6, PF6 };
+const int ledky[POCET_RELATOK] = { PIN_F6, PIN_F6, PIN_F6, PIN_F6 };
 
 const int CS = 20;
 
@@ -52,7 +55,7 @@ long prijimalKedyNaposledy = 0;
 
 #define gsmSerial Serial1
 
-char petovoCislo[14] = "+421948431163";
+char tekkovoCislo[14] = "+421948431163";
 
 // EEPROM NASTAVENIA, nacitaju sa pri spusteni
 char PocetCisel = 0;
@@ -332,15 +335,29 @@ void EEPROM_FirstSetup()
   adresa++;
   EEPROM.update(adresa, (char)1); // Pocet aktualne ulozenych cisel, max. 255
   adresa++;
-  eeprom_write_block((void *)petovoCislo, (void *)adresa, strlen(petovoCislo)+1); // Prve cislo
+  eeprom_write_block((void *)tekkovoCislo, (void *)adresa, strlen(tekkovoCislo)+1); // Prve cislo
   adresa += DLZKA_CISLA + 1;
+}
+
+void PrepniKanalOJeden()
+{
+  digitalWrite(CHANNEL_CHANGE_RELAY_PIN, LOW);
+  delay(100);
+  digitalWrite(CHANNEL_CHANGE_RELAY_PIN, HIGH);
+  delay(100);
+}
+
+void PrepniKanalOX(int x)
+{
+  for (int i = 0; i < x; i++)
+    PrepniKanalOJeden();
 }
 
 void setup()
 {
   pinMode (CS, OUTPUT);
-  pinMode (PIN_E1, OUTPUT);
-  digitalWrite(PIN_E1, LOW);
+  pinMode (CHANNEL_CHANGE_RELAY_PIN, OUTPUT);
+  digitalWrite(CHANNEL_CHANGE_RELAY_PIN, HIGH);
 
   Serial.begin(115200);
   //setSyncProvider(RTC.get);
@@ -382,6 +399,8 @@ void setup()
     digitalWrite(ledky[i], LED_ON);
     delay(1000);
   }
+
+  //PrepniKanalOX(16);
 
   delay(10000);
 
@@ -610,92 +629,93 @@ void SpracujSMSPrikaz(String text)
 	  UlozNastaveniaDoEEPROM();
 	}
 
-    if (text.startsWith("HP"))
+  if (text.startsWith("HP"))
 	{
 	  IbaHlavnyPrijemca = (text.charAt(2) == '1');
 	  Serial.print("Nastavene: Odosielanie SMS iba hlavnemu prijemcovi ");
 	  Serial.println(IbaHlavnyPrijemca ? "ZAPNUTE" : "VYPNUTE");
 	  UlozNastaveniaDoEEPROM();
 	}
+}
+
+if (text.length() == 4)
+{
+  if (text.charAt(0) == 'S' && text.charAt(1) == 'Q')
+  {
+    char string[3];
+    string[2] == 0;
+    string[0] == text.charAt(2);
+    string[1] == text.charAt(3);
+
+    int sql = atoi(string);
+
+    Serial.print("Jemna zmena sqelchu: ");
+    Serial.print(sql, DEC);
+    Serial.println(" percent.");
+
+    unsigned char novySquelch = map(sql, 0, 99, 0, 255); // todo skontrolovat
+    NastavSquelch(novySquelch);
   }
 
-  if (text.length() == 4)
+  if (text.charAt(0) == 'A' && text.charAt(1) == 'L' && text.charAt(2) == 'L')
   {
-    if (text.charAt(0) == 'S' && text.charAt(1) == 'Q')
+    int c2 = text.charAt(3);
+    int level = RELAY_ON;
+
+    if (c2 == '0')
     {
-      char string[3];
-      string[2] == 0;
-      string[0] == text.charAt(2);
-      string[1] == text.charAt(3);
-
-      int sql = atoi(string);
-
-      Serial.print("Jemna zmena sqelchu: ");
-      Serial.print(sql, DEC);
-      Serial.println(" percent.");
-
-      unsigned char novySquelch = map(sql, 0, 99, 0, 255); // todo skontrolovat
-      NastavSquelch(novySquelch);
+      level = RELAY_OFF;
     }
 
-    if (text.charAt(0) == 'A' && text.charAt(1) == 'L' && text.charAt(2) == 'L')
+    if (c2 == '1')
     {
-      int c2 = text.charAt(3);
-      int level = RELAY_ON;
-
-      if (c2 == '0')
-      {
-        level = RELAY_OFF;
-      }
-
-      if (c2 == '1')
-      {
-        level = RELAY_ON;
-      }
-
-      if (c2 == 'R')
-      {
-        ResetniVsetkyRelatka();
-        PosliSMS((char*)"Vsetky relatka resetnute. OK.");
-      }
-      else
-      {
-        NastavVsetkyRelatka(level == RELAY_ON);
-        String sprava1 = String("Vsetky relatka ");
-        sprava1 += (level == RELAY_ON ? "zapnute" : "vypnute");
-        sprava1 += ". OK.";
-        PosliSMS((char*)sprava1.c_str());
-      }
+      level = RELAY_ON;
     }
 
-    if (text.charAt(0) == 'T' && text.charAt(1) == 'E' && text.charAt(2) == 'M' && text.charAt(3) == 'P')
+    if (c2 == 'R')
     {
-	  Serial.println("Odosielam dotaz na teplotu.");
-      String sprava = String("Dotaz na teplotu. NTC " + TeplotaString() +  " st.C. RTC " + TeplotaRTCString() + " OK.");
-      PosliSMS((char*)sprava.c_str());
+      ResetniVsetkyRelatka();
+      PosliSMS((char*)"Vsetky relatka resetnute. OK.");
     }
-
-    if (text.charAt(0) == 'S' && text.charAt(1) == 'H' && text.charAt(2) == 'O' && text.charAt(3) == 'W')
+    else
     {
+      NastavVsetkyRelatka(level == RELAY_ON);
+      String sprava1 = String("Vsetky relatka ");
+      sprava1 += (level == RELAY_ON ? "zapnute" : "vypnute");
+      sprava1 += ". OK.";
+      PosliSMS((char*)sprava1.c_str());
+    }
+  }
+
+  if (text.charAt(0) == 'T' && text.charAt(1) == 'E' && text.charAt(2) == 'M' && text.charAt(3) == 'P')
+  {
+     Serial.println("Odosielam dotaz na teplotu.");
+     String sprava = String("Dotaz na teplotu. NTC " + TeplotaString() +  " st.C. RTC " + TeplotaRTCString() + " OK.");
+     PosliSMS((char*)sprava.c_str());
+  }
+
+  if (text.charAt(0) == 'S' && text.charAt(1) == 'H' && text.charAt(2) == 'O' && text.charAt(3) == 'W')
+  {
 	  Serial.println("Odosielam dotaz na nastavenia.");
-      String sprava = String("Nastavenia: ");
+    String sprava = String("Nastavenia: ");
 	  sprava += " TX: ";
 	  sprava += OdosielanieZapnute ? "ON" : "OFF";
 	  sprava += " HP: ";
 	  sprava += IbaHlavnyPrijemca ? "ON" : "OFF";
 	  sprava += ". Squelch ";
-      sprava += SquelchPercentString();
-      sprava += " percent. ";
+    sprava += SquelchPercentString();
+    sprava += " percent. ";
 	  sprava += "Prijemcovia (";
 	  sprava += (char)('0' + PocetCisel);
 	  sprava += ") su ";
-      for (int p = 0; p < PocetCisel; p++)
+
+    for (int p = 0; p < PocetCisel; p++)
 	  {
 	    sprava += (p + 1);
-		sprava += ". ";
-		sprava += String(CislaPrijemcov[p]);
+		  sprava += ". ";
+		  sprava += String(CislaPrijemcov[p]);
 	    sprava += ", ";
-      }
+    }
 
 	  sprava += ". Teplota NTC ";
 	  sprava += TeplotaString();
@@ -708,27 +728,26 @@ void SpracujSMSPrikaz(String text)
 
   }
 
-
   if (text.length() == 16)
   {
-	if (text.charAt(0) == 'A' && text.charAt(1) == 'R' && text.charAt(2) == ' ')
-	{
-		PocetCisel++;
-		String textPrijemca = text.substring(3);
-		char* prijemca = (char*)textPrijemca.c_str();
-        memcpy(CislaPrijemcov[PocetCisel - 1], prijemca, DLZKA_CISLA + 1);
-		UlozNastaveniaDoEEPROM();
+  	if (text.charAt(0) == 'A' && text.charAt(1) == 'R' && text.charAt(2) == ' ')
+  	{
+  		PocetCisel++;
+  		String textPrijemca = text.substring(3);
+  		char* prijemca = (char*)textPrijemca.c_str();
+          memcpy(CislaPrijemcov[PocetCisel - 1], prijemca, DLZKA_CISLA + 1);
+  		UlozNastaveniaDoEEPROM();
 
-		String msg = String();
-		msg += "Pridany prijemca cislo ";
-		msg += (char)('0' + PocetCisel);
-		msg += ", cislo: ";
-		msg += "\"" + String(CislaPrijemcov[PocetCisel - 1]) + "\"";
-		msg += ". OK.";
+  		String msg = String();
+  		msg += "Pridany prijemca cislo ";
+  		msg += (char)('0' + PocetCisel);
+  		msg += ", cislo: ";
+  		msg += "\"" + String(CislaPrijemcov[PocetCisel - 1]) + "\"";
+  		msg += ". OK.";
 
-		Serial.println(msg);
-		PosliSMS((char*) msg.c_str());
-	}
+  		Serial.println(msg);
+  		PosliSMS((char*) msg.c_str());
+  	}
   }
 
   if (text.length() == 3)
@@ -758,24 +777,28 @@ void loop()
   digitalWrite(PIN_E1, LOW);
   pinMode (PIN_C4, INPUT);
   pinMode (PIN_C5, INPUT);
-  // Serial.printf("C4: %d\n", (int)digitalRead(PIN_C4));
-  // Serial.printf("C5: %d\n", (int)digitalRead(PIN_C5));
+  Serial.printf("C4: %d\n", (int)digitalRead(PIN_C4));
+  Serial.printf("C5: %d\n", (int)digitalRead(PIN_C5));
   // Serial.println(redLed);
 
-  if (digitalRead(PIN_C5) == 1)
+  if (!digitalRead(PIN_TX)) // transmitting
   {
-     redLed++;
-   }
-   else
-   {
-     redLed = 0;
-   }
+   redLed++;
+  }
+  else
+  {
+   redLed = 0;
+  }
 
-  if (redLed > TX_TIMEOUT) ResetniRelatko(3);
+  if (redLed > TX_TIMEOUT)
+  {
+    ResetniRelatko(3);
+    redLed = 0;
+  }
 
   delay(1);
 
-  while (gsmSerial.available ())
+  while (gsmSerial.available())
   {
     char c;
     digitalWrite(LED_PIN, HIGH);
@@ -786,6 +809,7 @@ void loop()
     // Avoid overflow
     if (count == MAX_BUFF_LENGTH)
       break;
+
     delay(10);
   }
 
@@ -818,6 +842,7 @@ void loop()
     Serial.println("SMS prijata.");
     char *result = strstr(buff, ",") + 1;
     int i = -1;
+
     do
     {
       i++;
